@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import com.kerosene.common.infra.logging.LogSanitizer;
+import com.kerosene.common.domain.AddressDerivationPort;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -25,7 +26,7 @@ import java.util.Arrays;
  * address derivation for custodial and self-custody deposit flows.
  */
 @Service
-public class AddressDerivationService {
+public class AddressDerivationService implements AddressDerivationPort {
 
     private static final Logger log = LoggerFactory.getLogger(AddressDerivationService.class);
 

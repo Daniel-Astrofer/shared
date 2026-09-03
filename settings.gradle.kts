@@ -1,8 +1,13 @@
 rootProject.name = "kerosene-shared"
 
 val contractsDirectory = providers.environmentVariable("KEROSENE_CONTRACTS_DIR")
-    .orElse("../kerosene-contracts")
-    .get()
+    .orNull
+    ?.takeIf { it.isNotBlank() }
+    ?: sequenceOf(
+        "../contracts",
+        "../kerosene-contracts",
+    ).firstOrNull { file(it).isDirectory }
+    ?: "../contracts"
 
 includeBuild(contractsDirectory) {
     dependencySubstitution {
