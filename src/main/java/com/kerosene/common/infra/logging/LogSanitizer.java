@@ -3,9 +3,8 @@ package com.kerosene.common.infra.logging;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
 import java.util.HexFormat;
-import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -41,14 +40,13 @@ public final class LogSanitizer {
     private static final int MAX_PAYLOAD_CHARS = 2048;
 
     // ─── Sensitive JSON keys ──────────────────────────────────────────────────
-    private static final Set<String> SENSITIVE_JSON_KEYS = new HashSet<>(Arrays.asList(
-            "password", "passwd", "senha", "secret", "token", "totp", "totpsecret", "totp_secret",
-            "seed", "mnemonic", "privatekey", "private_key", "private-key", "xprv", "xpub",
-            "cvv", "cvc", "pin", "cardnumber", "card_number", "creditcard", "aeskey", "aes_key",
-            "jwt", "accesstoken", "refreshtoken", "sessionid", "macaroon", "preAuthToken",
-            "invoice", "invoicedata", "bolt11", "paymentrequest", "authorization", "cookie",
-            "cosignersecret", "cosigner_secret", "shardkey", "shard_key"
-    ));
+    private static final Set<String> SENSITIVE_JSON_KEYS = Set.of(
+            "password", "passwd", "senha", "secret", "token", "totp", "totpsecret",
+            "seed", "mnemonic", "passphrase", "privatekey", "xprv", "xpub", "cvv", "cvc", "pin",
+            "cardnumber", "creditcard", "aeskey", "jwt", "accesstoken", "refreshtoken", "sessionid",
+            "macaroon", "preauthtoken", "invoice", "invoicedata", "bolt11", "paymentrequest",
+            "authorization", "cookie", "cosignersecret", "shardkey"
+    );
 
     // ─── Pattern: sensitive JSON field (value between quotes after the key) ───
     private static final Pattern SENSITIVE_JSON_FIELD = Pattern.compile(
@@ -96,6 +94,7 @@ public final class LogSanitizer {
     private static final Pattern CARD_PAN = Pattern.compile(
             "\\b(?:\\d[ \\-]?){13,19}\\b");
 
+    /** Prevents construction of this static sanitization utility. */
     private LogSanitizer() {
     }
 
@@ -106,36 +105,48 @@ public final class LogSanitizer {
     /**
      * Returns a short SHA-256 hex prefix of the value — safe for log correlation
      * without revealing the original value.
+     * @param value sensitive value whose correlation fingerprint is needed
+     * @return {@code absent} for null or blank input, otherwise a short SHA-256 hex prefix
      */
     public static String fingerprint(String value) {
         if (value == null || value.isBlank()) return "absent";
         return "sha256:" + HexFormat.of().formatHex(sha256(value.getBytes(StandardCharsets.UTF_8)), 0, 8);
     }
 
-    /** @see #fingerprint(String) */
+    /** Fingerprints binary sensitive material without logging its original bytes.
+     * @param value binary value to fingerprint
+     * @return {@code absent} for null or empty input, otherwise a short SHA-256 hex prefix
+     */
     public static String fingerprint(byte[] value) {
         if (value == null || value.length == 0) return "absent";
         return "sha256:" + HexFormat.of().formatHex(sha256(value), 0, 8);
     }
 
-    /** Always returns {@code MASKED_IP} — prevents IP geolocation leaks in logs. */
+    /** Always returns {@code MASKED_IP} — prevents IP geolocation leaks in logs.
+     * @param ignored raw address, intentionally never inspected or retained
+     * @return the constant masked-IP marker
+     */
     public static String maskedIp(String ignored) {
         return "MASKED_IP";
     }
 
     /**
      * Checks whether a JSON field name should be masked.
-     * Used by {@link com.kerosene.common.observability.SensitiveDataMasker}.
+     * Used by service-level log value maskers.
+     * @param key candidate field name
+     * @return {@code true} when the normalized name is in the sensitive-key set
      */
     public static boolean isSensitiveKey(String key) {
         if (key == null) return false;
-        String normalised = key.toLowerCase().replace("-", "").replace("_", "");
+        String normalised = key.toLowerCase(Locale.ROOT).replace("-", "").replace("_", "");
         return SENSITIVE_JSON_KEYS.contains(normalised);
     }
 
     /**
      * Full pipeline sanitisation for financial payloads (HTTP bodies, log lines, etc.).
      * Applies every masking rule in order and caps the output at {@value #MAX_PAYLOAD_CHARS} chars.
+     * @param value payload text to sanitize
+     * @return sanitized text, preserving null input as null and blank input as an empty string
      */
     public static String sanitizeFinancialPayload(String value) {
         if (value == null) return null;
@@ -184,15 +195,28 @@ public final class LogSanitizer {
     // PRIVATE HELPERS
     // ═════════════════════════════════════════════════════════════════════════
 
+    /** Replaces each matched token with a short prefix/suffix display form.
+     * @param value source text
+     * @param pattern token recognizer
+     * @return text with matching tokens passed through {@link #maskToken(String)}
+     */
     private static String maskWithPrefixSuffix(String value, Pattern pattern) {
         return pattern.matcher(value).replaceAll(match -> Matcher.quoteReplacement(maskToken(match.group())));
     }
 
+    /** Masks short tokens fully and preserves limited correlation context for longer tokens.
+     * @param token sensitive token
+     * @return fully masked short token or prefix/ellipsis/suffix representation
+     */
     private static String maskToken(String token) {
         if (token == null || token.length() <= 12) return "[MASKED]";
         return token.substring(0, 6) + "..." + token.substring(token.length() - 4);
     }
 
+    /** Masks the central digits of Brazilian CPF values while retaining edge digits.
+     * @param value text containing zero or more CPF candidates
+     * @return text with valid-length CPF candidates structurally masked
+     */
     private static String maskCpf(String value) {
         Matcher m = CPF.matcher(value);
         StringBuffer sb = new StringBuffer();
@@ -208,6 +232,10 @@ public final class LogSanitizer {
         return sb.toString();
     }
 
+    /** Masks the central digits of Brazilian CNPJ values while retaining the root and suffix.
+     * @param value text containing zero or more CNPJ candidates
+     * @return text with valid-length CNPJ candidates structurally masked
+     */
     private static String maskCnpj(String value) {
         Matcher m = CNPJ.matcher(value);
         StringBuffer sb = new StringBuffer();
@@ -223,6 +251,10 @@ public final class LogSanitizer {
         return sb.toString();
     }
 
+    /** Masks the local part of email addresses while preserving the domain for routing context.
+     * @param value text containing zero or more email candidates
+     * @return text with sufficiently long local parts masked
+     */
     private static String maskEmail(String value) {
         Matcher m = EMAIL.matcher(value);
         StringBuffer sb = new StringBuffer();
@@ -242,6 +274,10 @@ public final class LogSanitizer {
         return sb.toString();
     }
 
+    /** Retains the first six and last four PAN digits while masking the middle.
+     * @param value text containing zero or more payment-card candidates
+     * @return text with 13-to-19 digit card numbers masked
+     */
     private static String maskCardPan(String value) {
         Matcher m = CARD_PAN.matcher(value);
         StringBuffer sb = new StringBuffer();
@@ -258,6 +294,10 @@ public final class LogSanitizer {
         return sb.toString();
     }
 
+    /** Finds the earliest key/value separator in a sensitive text fragment.
+     * @param value matched key/value expression
+     * @return index of the first colon or equals sign, or {@code -1} if absent
+     */
     private static int firstSepIndex(String value) {
         int colon = value.indexOf(':');
         int equals = value.indexOf('=');
@@ -266,6 +306,11 @@ public final class LogSanitizer {
         return Math.min(colon, equals);
     }
 
+    /** Computes SHA-256 using the JDK provider.
+     * @param input bytes to digest
+     * @return 32-byte SHA-256 digest
+     * @throws IllegalStateException if the required JDK algorithm is unavailable
+     */
     private static byte[] sha256(byte[] input) {
         try {
             return MessageDigest.getInstance("SHA-256").digest(input);
