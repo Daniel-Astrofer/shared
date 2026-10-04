@@ -33,6 +33,12 @@ public class AddressDerivationService implements AddressDerivationPort {
     private final NetworkParameters netParams;
     private final String derivationSalt;
 
+    /** Creates the derivation service for the configured Bitcoin network.
+     *
+     * @param network network name; {@code mainnet} and {@code main} select mainnet,
+     *                while other values select testnet parameters
+     * @param salt secret application salt used by the legacy deterministic fallback
+     */
     public AddressDerivationService(
             @Value("${bitcoin.network:mainnet}") String network,
             @Value("${bitcoin.derivation.salt:kerosene_sovereign_salt_2026}") String salt) {
@@ -74,22 +80,47 @@ public class AddressDerivationService implements AddressDerivationPort {
         }
     }
 
-    /**
-     * Derives a P2WPKH address from an xpub at a given index.
-     * Uses BIP84/Segwit (m/84'/0'/0'/0/index).
+    /** Derives the receive-branch P2WPKH address at the requested child index.
+     *
+     * <p>The supplied extended public key is treated as the account key; this
+     * overload selects the external branch ({@code m/0/index}).
+     *
+     * @param xpub account extended public key
+     * @param index non-hardened child index
+     * @return the derived SegWit address
      */
     public String deriveAddressFromXpub(String xpub, int index) {
         return deriveAddressFromXpub(xpub, index, false);
     }
 
+    /** Derives an address from the selected external or change branch.
+     *
+     * @param xpub account extended public key
+     * @param index non-hardened child index
+     * @param isChange {@code true} selects branch 1; {@code false} selects branch 0
+     * @return the derived SegWit address
+     */
     public String deriveAddressFromXpub(String xpub, int index, boolean isChange) {
         return deriveAddressDetailsFromXpub(xpub, index, isChange).address();
     }
 
+    /** Derives receive-branch address data including the corresponding public key.
+     *
+     * @param xpub account extended public key
+     * @param index non-hardened child index
+     * @return address, public key, index, and branch metadata
+     */
     public DerivedAddress deriveAddressDetailsFromXpub(String xpub, int index) {
         return deriveAddressDetailsFromXpub(xpub, index, false);
     }
 
+    /** Derives address data from the selected account-key branch and child index.
+     *
+     * @param xpub account extended public key
+     * @param index non-hardened child index
+     * @param isChange whether to use the internal/change branch
+     * @return address, public key, index, and branch metadata
+     */
     public DerivedAddress deriveAddressDetailsFromXpub(String xpub, int index, boolean isChange) {
         try {
             DeterministicKey masterKey = DeterministicKey.deserializeB58(normalizeExtendedPublicKey(xpub), netParams);
@@ -108,6 +139,14 @@ public class AddressDerivationService implements AddressDerivationPort {
         }
     }
 
+    /** Derives the BIP84 account extended public key from a mnemonic.
+     *
+     * <p>The method derives purpose 84, the network coin type, and account zero,
+     * then returns only the account public key for downstream address derivation.
+     *
+     * @param mnemonic BIP39 mnemonic phrase
+     * @return serialized account extended public key for the configured network
+     */
     public String deriveAccountXpub(String mnemonic) {
         try {
             byte[] seed = org.bitcoinj.crypto.MnemonicCode.toSeed(
@@ -129,6 +168,13 @@ public class AddressDerivationService implements AddressDerivationPort {
         }
     }
 
+    /** Derives a non-hardened child extended public key from a parent public key.
+     *
+     * @param parentXpub parent extended public key
+     * @param childIndex non-negative non-hardened child index
+     * @return serialized child extended public key
+     * @throws IllegalArgumentException if {@code childIndex} is negative
+     */
     public String deriveChildXpub(String parentXpub, int childIndex) {
         if (childIndex < 0) {
             throw new IllegalArgumentException("Child index must be non-negative.");
@@ -149,11 +195,20 @@ public class AddressDerivationService implements AddressDerivationPort {
      * Rewrites xpub/ypub/zpub ↔ tpub/upub/vpub so the key version matches the
      * configured Bitcoin network. Required for Bitcoin Core descriptors on
      * testnet/testnet4 (Core rejects mainnet {@code xpub} as invalid).
+     *
+     * @param rawXpub extended public key in a recognized version format
+     * @return the same key material encoded with the configured network version
      */
     public String toNetworkExtendedPublicKey(String rawXpub) {
         return normalizeExtendedPublicKey(rawXpub);
     }
 
+    /** Validates Base58Check encoding and translates recognized key versions.
+     *
+     * @param rawXpub user-supplied extended public key
+     * @return normalized key, or the trimmed input for an unrecognized version
+     * @throws IllegalArgumentException if the input is absent or has invalid checksum encoding
+     */
     private String normalizeExtendedPublicKey(String rawXpub) {
         if (rawXpub == null || rawXpub.isBlank()) {
             throw new IllegalArgumentException("XPUB is required.");
@@ -209,6 +264,15 @@ public class AddressDerivationService implements AddressDerivationPort {
         return Base58.encode(encoded);
     }
 
+    /** Checks whether the first four bytes match a serialized key version.
+     *
+     * @param value decoded extended-key payload
+     * @param b0 expected first byte
+     * @param b1 expected second byte
+     * @param b2 expected third byte
+     * @param b3 expected fourth byte
+     * @return {@code true} when all four bytes match
+     */
     private boolean startsWith(byte[] value, int b0, int b1, int b2, int b3) {
         return value.length >= 4
                 && (value[0] & 0xff) == b0
@@ -217,10 +281,20 @@ public class AddressDerivationService implements AddressDerivationPort {
                 && (value[3] & 0xff) == b3;
     }
 
+    /** Reports whether this service uses Bitcoin mainnet parameters.
+     * @return {@code true} for mainnet, otherwise {@code false}
+     */
     private boolean isMainnet() {
         return netParams instanceof MainNetParams;
     }
 
+    /** Address derivation result with the exact public key and branch metadata.
+     *
+     * @param address network-encoded SegWit address
+     * @param publicKey compressed child public key bytes
+     * @param index derived non-hardened child index
+     * @param change whether the internal/change branch was selected
+     */
     public record DerivedAddress(
             String address,
             byte[] publicKey,

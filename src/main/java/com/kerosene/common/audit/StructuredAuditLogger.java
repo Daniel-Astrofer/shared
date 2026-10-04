@@ -21,6 +21,22 @@ public class StructuredAuditLogger {
 
     private static final Logger log = LoggerFactory.getLogger(StructuredAuditLogger.class);
 
+    /** Creates the logger component; the SLF4J logger is bound to this class. */
+    public StructuredAuditLogger() {
+    }
+
+    /** Emits the immutable metadata associated with a persisted audit record.
+     * @param eventType stable audit event category
+     * @param sequenceNumber monotonic sequence assigned to the record
+     * @param auditId unique audit record identifier
+     * @param transactionId related transaction identifier, when applicable
+     * @param walletId related wallet identifier, when applicable
+     * @param fromStatus prior domain status, when the event represents a transition
+     * @param toStatus resulting domain status, when the event represents a transition
+     * @param payloadHash digest of the canonical event payload
+     * @param eventHash digest linking this record into the audit chain
+     * @param metadata additional sanitized, non-secret event attributes
+     */
     public void persisted(
             AuditEventType eventType,
             Long sequenceNumber,

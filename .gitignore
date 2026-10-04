@@ -1,5 +1,7 @@
 .gradle/
 build/
+bin/
 *.log
 .idea/
 .vscode/
+

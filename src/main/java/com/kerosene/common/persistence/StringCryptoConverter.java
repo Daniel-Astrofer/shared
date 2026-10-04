@@ -13,6 +13,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Base64;
 
+/** Encrypts selected JPA string columns and authenticates stored ciphertext with an HMAC.
+ *
+ * <p>Plaintext buffers are padded for limited length hiding and cleared after use;
+ * reads verify the HMAC before decrypting. This converter is active only in the KFE profile.
+ */
 @Converter
 @Component
 @Profile("kfe")
@@ -20,11 +25,24 @@ public class StringCryptoConverter implements AttributeConverter<String, String>
 
     private static StringColumnCryptoPort cryptoPort;
 
+    /** Creates a converter whose static cryptographic dependency is injected by Spring. */
+    public StringCryptoConverter() {
+    }
+
+    /** Supplies the cryptographic port used by JPA conversion callbacks.
+     * @param cryptoPort application encryption and key access port
+     */
     @Autowired
     public void setCryptoPort(StringColumnCryptoPort cryptoPort) {
         StringCryptoConverter.cryptoPort = cryptoPort;
     }
 
+    /** Encrypts a non-null entity value and stores its integrity tag with the ciphertext.
+     * @param plainText entity value, or null
+     * @return authenticated encrypted database representation, or null
+     * @throws IllegalStateException if Spring has not initialized the crypto port
+     * @throws IllegalArgumentException if UTF-8 input exceeds the converter's size bound
+     */
     @Override
     public String convertToDatabaseColumn(String plainText) {
         if (plainText == null) {
@@ -60,6 +78,12 @@ public class StringCryptoConverter implements AttributeConverter<String, String>
         }
     }
 
+    /** Verifies and decrypts a stored value, also accepting legacy untagged ciphertext.
+     * @param dbData stored representation, or null
+     * @return decrypted and trimmed entity value, or null
+     * @throws SecurityException if a stored HMAC does not match the ciphertext
+     * @throws IllegalStateException if decryption or cryptographic setup fails
+     */
     @Override
     public String convertToEntityAttribute(String dbData) {
         if (dbData == null) {
@@ -106,6 +130,11 @@ public class StringCryptoConverter implements AttributeConverter<String, String>
         }
     }
 
+    /** Computes an HMAC-SHA256 tag using the configured master key and clears key bytes afterward.
+     * @param ciphertext encoded ciphertext to authenticate
+     * @return Base64-encoded authentication tag
+     * @throws IllegalStateException if key access or MAC computation fails
+     */
     private static String computeHmac(String ciphertext) {
         byte[] keyBytes = null;
         try {
